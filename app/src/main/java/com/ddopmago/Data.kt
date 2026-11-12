@@ -143,8 +143,9 @@ object Repo {
 
     fun syllables(): List<Pair<String, Char>> = roman.sortedWith(compareBy({ it.first }, { it.second }))
 
-    private val wordKeys by lazy { words.map { w -> w.map { map[it] ?: "" }.joinToString("") } }
-    private val dictKeys by lazy { dictS.map { it.yi.map { c -> map[c] ?: "" }.joinToString("") } }
+    // 修复点：使用明确的变量名 `c` 或通过 `.asIterable()` 避免编译器对字符串 map 与 joinToString 的歧义推导
+    private val wordKeys by lazy { words.map { w -> w.asIterable().map { c -> map[c] ?: "" }.joinToString("") } }
+    private val dictKeys by lazy { dictS.map { s -> s.yi.asIterable().map { c -> map[c] ?: "" }.joinToString("") } }
 
     fun searchWords(q: String): List<String> {
         val yq = q.filter { isYi(it) }; val lq = q.lowercase().filter { it in 'a'..'z' }
