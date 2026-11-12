@@ -18,16 +18,18 @@ data class Q(
     val options: List<String>, val ans: Int, val expl: String,
     val tag: String = "", val pts: Int = 0
 ) {
-    val id: String get() = "$type|$shown|${options[ans]}"
+    val id: String get() = "$type|\( shown| \){options.getOrElse(ans) { "" }}"
     fun toJson(): JSONObject = JSONObject().put("type", type).put("prompt", prompt).put("shown", shown)
         .put("options", JSONArray(options)).put("ans", ans).put("expl", expl).put("tag", tag).put("pts", pts)
 
     companion object {
         fun from(o: JSONObject): Q {
             val a = o.getJSONArray("options")
-            return Q(o.getInt("type"), o.getString("prompt"), o.getString("shown"),
+            return Q(
+                o.getInt("type"), o.getString("prompt"), o.getString("shown"),
                 (0 until a.length()).map { a.getString(it) }, o.getInt("ans"), o.getString("expl"),
-                o.optString("tag", ""), o.optInt("pts", 0))
+                o.optString("tag", ""), o.optInt("pts", 0)
+            )
         }
     }
 }
@@ -39,7 +41,7 @@ object Repo {
     private var cleanYi: List<String> = emptyList()
     private var cleanZh: List<String> = emptyList()
     private var roman: List<Pair<String, Char>> = emptyList()
-    private val map = HashMap<Char, String>()
+    private val map = mutableMapOf<Char, String>()
     var words: List<String> = emptyList()
     var hanzi: List<Char> = emptyList()
     private var succ: Map<Char, List<Char>> = emptyMap()
@@ -72,7 +74,8 @@ object Repo {
         sents = (0 until a.length()).map { Sent.from(a.getJSONObject(it)) }
         val d = JSONArray(read(c, "dict.json"))
         dictS = (0 until d.length()).map {
-            val e = d.getJSONArray(it); Sent("规范彝文词典", e.getString(0), pinyin(e.getString(0)), e.getString(1))
+            val e = d.getJSONArray(it)
+            Sent("规范彝文词典", e.getString(0), pinyin(e.getString(0)), e.getString(1))
         }
         gloss = dictS.associate { it.yi to it.zh }
         all = sents + dictS
@@ -83,14 +86,21 @@ object Repo {
         pyKeys = pyMap.keys.sorted()
         val ra = JSONArray(read(c, "radicals.json"))
         radicals = (0 until ra.length()).map {
-            val o = ra.getJSONObject(it); val ga = o.getJSONArray("groups")
-            Rad(o.getInt("no"), o.getString("rad"), (0 until ga.length()).map { k -> val g = ga.getJSONObject(k); Pair(g.getInt("n"), g.getString("chars")) })
+            val o = ra.getJSONObject(it)
+            val ga = o.getJSONArray("groups")
+            Rad(o.getInt("no"), o.getString("rad"), (0 until ga.length()).map { k ->
+                val g = ga.getJSONObject(k)
+                Pair(g.getInt("n"), g.getString("chars"))
+            })
         }
         val ba = JSONArray(read(c, "bookqs.json"))
         bookQs = (0 until ba.length()).map { Q.from(ba.getJSONObject(it)) }
         words = read(c, "words.txt").lines().filter { it.isNotBlank() }
+
         // 中文键盘：字频表 + 下一字联想
-        val freq = HashMap<Char, Int>(); val nx = HashMap<Char, HashMap<Char, Int>>(); val st = HashMap<Char, Int>()
+        val freq = mutableMapOf<Char, Int>()
+        val nx = mutableMapOf<Char, MutableMap<Char, Int>>()
+        val st = mutableMapOf<Char, Int>()
         all.forEach { s ->
             val z = s.zh
             z.forEachIndexed { i, ch ->
@@ -98,7 +108,8 @@ object Repo {
                     freq[ch] = (freq[ch] ?: 0) + 1
                     if (i == 0) st[ch] = (st[ch] ?: 0) + 1
                     if (i + 1 < z.length && isHan(z[i + 1])) {
-                        val mm = nx.getOrPut(ch) { HashMap() }; mm[z[i + 1]] = (mm[z[i + 1]] ?: 0) + 1
+                        val mm = nx.getOrPut(ch) { mutableMapOf() }
+                        mm[z[i + 1]] = (mm[z[i + 1]] ?: 0) + 1
                     }
                 }
             }
@@ -130,7 +141,7 @@ object Repo {
         if (k.isEmpty()) return emptyList()
         if (k == "lue") k = "lve"
         if (k == "nue") k = "nve"
-        val out = LinkedHashSet<Char>()
+        val out = linkedSetOf<Char>()
         pyMap[k]?.forEach { out.add(it) }
         for (s in pyKeys) {
             if (s != k && s.startsWith(k)) pyMap[s]?.take(6)?.forEach { out.add(it) }
@@ -147,12 +158,14 @@ object Repo {
     private val dictKeys by lazy { dictS.map { it.yi.map { c -> map[c] ?: "" }.joinToString("") } }
 
     fun searchWords(q: String): List<String> {
-        val yq = q.filter { isYi(it) }; val lq = q.lowercase().filter { it in 'a'..'z' }
+        val yq = q.filter { isYi(it) }
+        val lq = q.lowercase().filter { it in 'a'..'z' }
         if (yq.isEmpty() && lq.isEmpty()) return emptyList()
-        val out = ArrayList<String>()
+        val out = mutableListOf<String>()
         for (i in words.indices) {
             if ((yq.isNotEmpty() && words[i].contains(yq)) || (yq.isEmpty() && wordKeys[i].startsWith(lq))) {
-                out.add(words[i]); if (out.size >= 80) break
+                out.add(words[i])
+                if (out.size >= 80) break
             }
         }
         return out
@@ -175,13 +188,15 @@ object Repo {
         if (t == q) return 3.0
         if (t.contains(q)) return 2.0 + q.length.toDouble() / t.length
         if (t.length >= 2 && q.contains(t)) return 1.5 + t.length.toDouble() / q.length
-        val a = grams(q); val b = grams(t)
+        val a = grams(q)
+        val b = grams(t)
         return 2.0 * a.count { it in b } / (a.size + b.size)
     }
 
     fun sim(a: String, b: String): Double {
         if (a.isEmpty() || b.isEmpty()) return 0.0
-        val x = grams(a); val y = grams(b)
+        val x = grams(a)
+        val y = grams(b)
         return 2.0 * x.count { it in y } / (x.size + y.size)
     }
 
@@ -191,49 +206,71 @@ object Repo {
         if (q.isEmpty()) return emptyList()
         val pool = if (fromYi) cleanYi else cleanZh
         return all.indices.map { it to score(q, pool[it]) }
-            .filter { it.second >= 0.3 }.sortedByDescending { it.second }.take(12).map { all[it.first] }
+            .filter { it.second >= 0.3 }
+            .sortedByDescending { it.second }
+            .take(12)
+            .map { all[it.first] }
     }
 
     fun sections(): List<String> = sents.map { it.sec }.distinct()
 
     /** 题型: 0彝→中选择 1中→彝选择 2判断 3翻译(彝→中) 4翻译(中→彝) 5填空 6拼音 */
-    fun makeQ(kind: Int, s: Sent = sents.random()): Q {
-        val pool = sents.filter { it.zh != s.zh && it.yi != s.yi }.shuffled()
-        val expl = "${s.yi}\n${s.zh}"
+    fun makeQ(kind: Int, s: Sent? = null): Q {
+        val base = s ?: sents.randomOrNull() ?: return dummyQ(kind)
+        val pool = sents.filter { it.zh != base.zh && it.yi != base.yi }.shuffled()
+        val expl = "\( {base.yi}\n \){base.zh}"
         return when (kind) {
             0 -> {
-                val o = (pool.distinctBy { it.zh }.take(3).map { it.zh } + s.zh).shuffled()
-                Q(0, "选择题：下面的彝文是什么意思？", s.yi, o, o.indexOf(s.zh), expl)
+                val o = (pool.distinctBy { it.zh }.take(3).map { it.zh } + base.zh).shuffled()
+                Q(0, "选择题：下面的彝文是什么意思？", base.yi, o, o.indexOf(base.zh), expl)
             }
             1 -> {
-                val o = (pool.distinctBy { it.yi }.take(3).map { it.yi } + s.yi).shuffled()
-                Q(1, "选择题：下面的中文用彝文怎么说？", s.zh, o, o.indexOf(s.yi), expl)
+                val o = (pool.distinctBy { it.yi }.take(3).map { it.yi } + base.yi).shuffled()
+                Q(1, "选择题：下面的中文用彝文怎么说？", base.zh, o, o.indexOf(base.yi), expl)
             }
             2 -> {
                 val right = Random.nextBoolean()
-                val zh = if (right) s.zh else pool.first().zh
-                Q(2, "判断题：下面的译文是否正确？", "${s.yi}\n译文：$zh", listOf("正确", "错误"), if (right) 0 else 1, expl)
+                val zh = if (right) base.zh else (pool.firstOrNull()?.zh ?: base.zh)
+                Q(2, "判断题：下面的译文是否正确？", "${base.yi}\n译文：$zh", listOf("正确", "错误"), if (right) 0 else 1, expl)
             }
-            3 -> Q(3, "翻译题：把彝文翻译成中文", s.yi, listOf(s.zh), 0, expl)
-            4 -> Q(4, "翻译题：把中文翻译成彝文", s.zh, listOf(s.yi), 0, expl)
+            3 -> Q(3, "翻译题：把彝文翻译成中文", base.yi, listOf(base.zh), 0, expl)
+            4 -> Q(4, "翻译题：把中文翻译成彝文", base.zh, listOf(base.yi), 0, expl)
             5 -> {
-                val b = if (s.yi.count { isYi(it) } >= 3) s else sents.first { it.yi.count { c -> isYi(c) } >= 3 }
-                val k = b.yi.indices.filter { isYi(b.yi[it]) }.random()
+                val b = if (base.yi.count { isYi(it) } >= 3) base
+                else sents.firstOrNull { it.yi.count { c -> isYi(c) } >= 3 } ?: base
+                val indices = b.yi.indices.filter { isYi(b.yi[it]) }
+                if (indices.isEmpty()) return dummyQ(5)
+                val k = indices.random()
                 val blank = b.yi.substring(0, k) + "＿" + b.yi.substring(k + 1)
-                Q(5, "填空题：根据中文，补全彝文（输入＿处的字）", "${b.zh}\n$blank", listOf(b.yi[k].toString()), 0, "${b.yi}\n${b.zh}")
+                Q(5, "填空题：根据中文，补全彝文（输入＿处的字）", "${b.zh}\n\( blank", listOf(b.yi[k].toString()), 0, " \){b.yi}\n${b.zh}")
             }
             else -> {
-                val w = words.filter { it.length in 2..3 }.random()
+                val w = words.filter { it.length in 2..3 }.randomOrNull() ?: "ꆏꉢ"
                 Q(6, "拼音题：写出下面彝文的拼音（连写或空格分开均可，不用声调符号）", w, listOf(pinyin(w)), 0, w)
             }
         }
     }
 
+    private fun dummyQ(kind: Int): Q = Q(
+        kind,
+        "（数据不足）",
+        "？",
+        listOf("？"),
+        0,
+        "数据未加载或不足"
+    )
+
     fun pts(t: Int) = when (t) { 0, 1 -> 3; 2, 6 -> 2; 5, 7 -> 4; else -> 5 }
     fun ptsOf(q: Q) = if (q.pts > 0) q.pts else pts(q.type)
     fun group(t: Int) = when (t) { 0, 1 -> "选择题"; 5, 7 -> "填空题"; 2 -> "判断题"; 6 -> "拼音题"; else -> "翻译题" }
 
-    private val bookNames = mapOf("leo_zh" to "勒俄特依（中文）", "amo" to "阿莫里惹", "mamu" to "玛牧特依", "leo_yi" to "勒俄特依（彝文）", "story" to "凉山民间故事选")
+    private val bookNames = mapOf(
+        "leo_zh" to "勒俄特依（中文）",
+        "amo" to "阿莫里惹",
+        "mamu" to "玛牧特依",
+        "leo_yi" to "勒俄特依（彝文）",
+        "story" to "凉山民间故事选"
+    )
     fun bookName(tag: String) = bookNames[tag] ?: ""
     fun bookTags() = bookNames.keys.toList()
 
@@ -241,20 +278,28 @@ object Repo {
     fun similar(q: Q, n: Int = 3): List<Q> {
         if (q.tag.isNotEmpty() && q.tag != "paper") {
             return bookQs.filter { it.tag == q.tag && it.id != q.id }
-                .sortedByDescending { sim(clean(it.shown + it.prompt), clean(q.shown + q.prompt)) + (if (it.type == q.type) 0.3 else 0.0) + Random.nextDouble() * 0.1 }
+                .sortedByDescending {
+                    sim(clean(it.shown + it.prompt), clean(q.shown + q.prompt)) +
+                            (if (it.type == q.type) 0.3 else 0.0) + Random.nextDouble() * 0.1
+                }
                 .take(n)
         }
         if (q.type == 6) {
             val w = q.shown
-            return words.filter { it.length in 2..3 && it != w && it.any { c -> c in w } }.shuffled().take(n)
+            return words.filter { it.length in 2..3 && it != w && it.any { c -> c in w } }
+                .shuffled().take(n)
                 .map { x -> Q(6, q.prompt, x, listOf(pinyin(x)), 0, x) }
         }
         if (q.type in 0..5) {
             val base = sents.firstOrNull { it.yi == q.expl.lines().firstOrNull() }
             if (base != null) {
                 return sents.filter { it.yi != base.yi }
-                    .sortedByDescending { sim(clean(it.zh), clean(base.zh)) + (if (it.sec == base.sec) 0.3 else 0.0) + Random.nextDouble() * 0.1 }
-                    .take(n).map { makeQ(q.type, it) }
+                    .sortedByDescending {
+                        sim(clean(it.zh), clean(base.zh)) +
+                                (if (it.sec == base.sec) 0.3 else 0.0) + Random.nextDouble() * 0.1
+                    }
+                    .take(n)
+                    .map { makeQ(q.type, it) }
             }
         }
         return List(n) { makeQ((0..5).random()) }
@@ -262,12 +307,16 @@ object Repo {
 
     /** 试卷：选择8×3 + 填空5×4 + 判断8×2 + 翻译4×5 + 拼音10×2 = 100 分 */
     fun makeExam(): List<Q> {
-        val ss = sents.shuffled(); var i = 0
-        val kinds = List(4) { 0 } + List(4) { 1 } + List(5) { 5 } + List(8) { 2 } + List(2) { 3 } + List(2) { 4 } + List(10) { 6 }
-        return kinds.map { makeQ(it, ss[i++]) }
+        if (sents.isEmpty()) return emptyList()
+        val ss = sents.shuffled()
+        val kinds = List(4) { 0 } + List(4) { 1 } + List(5) { 5 } +
+                List(8) { 2 } + List(2) { 3 } + List(2) { 4 } + List(10) { 6 }
+        return kinds.mapIndexed { idx, kind ->
+            makeQ(kind, ss.getOrElse(idx % ss.size) { ss.random() })
+        }
     }
 
-    /** 判分：返回 0.0~1.0 的得分比例。选择/判断 a 为选项序号 */
+    /** 判分：返回 0.0\~1.0 的得分比例。选择/判断 a 为选项序号 */
     fun grade(q: Q, a: String): Double {
         if (a.isBlank()) return 0.0
         return when (q.type) {
@@ -275,11 +324,16 @@ object Repo {
             5, 7 -> if (q.options[0].split("/", "、").any { clean(it) == clean(a) }) 1.0 else 0.0
             6 -> if (a.lowercase().filter { it in 'a'..'z' } == q.options[0].filter { it in 'a'..'z' }) 1.0 else 0.0
             else -> {
-                val c = clean(a); val t = q.options[0]
+                val c = clean(a)
+                val t = q.options[0]
                 val alts = t.split("/").map { clean(it) } + clean(t)
                 if (alts.any { it == c }) 1.0 else {
-                    val s = alts.maxOf { sim(c, it) }
-                    if (s >= 0.8) 0.8 else if (s >= 0.5) 0.5 else 0.0
+                    val s = alts.maxOfOrNull { sim(c, it) } ?: 0.0
+                    when {
+                        s >= 0.8 -> 0.8
+                        s >= 0.5 -> 0.5
+                        else -> 0.0
+                    }
                 }
             }
         }
